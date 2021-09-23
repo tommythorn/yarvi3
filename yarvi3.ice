@@ -1,4 +1,27 @@
 /*
+20210922 Complex pipelines aren't helped by Silice.
+
+We need to leverage the Pipeline Control Invariant: For all stages
+up-to and including the Controlling Stage, if a stage is valid, then
+all *younger* stages are guaranteed to be valid as well.  Thus, as
+long as we are only checking in the Controlling Stage, we only need to
+worry about the validity of ourselves.  It also implies a benefit to
+moving the Controlling Stage as far down in the pipeline as possible.
+Also, this means we cannot insert invalid stages in the middle, so if
+we introduce bubbles, they have to be well-formed nop instructions
+(but marked as bubbles so they don't count in INSTRET, get allocated
+in the ROB, etc).
+
+In thinking about this, it seems to me that the valid signal is
+actually more complicated than the token approach I used.
+
+This still doesn't avoid the complications from bypassing from a load
+further down in the pipeline.  We could of course move load up higher
+by moving EX lower....
+*/
+
+
+/*
  * YARVI3 - Yet Another RISC-V Implementation, 3rd generation
  *
  * With thanks to Sylvain Lefevbre for helpful Silice suggestions.
@@ -24,17 +47,8 @@ algorithm main(output uint8 leds)
 {
   // Architectural state
   bram uint32 code[32] = {
-      32h006282b3,           // add     x5,x5,x6
-      32h002081b3,           // add     x3,x1,x2
-      32h000100b3,           // add     x1,x2,x0
-      32h00018133,           // add     x2,x3,x0
-      32hfe41c8e3,           // blt     x3,x4,0 <_start>
-      32h00000033,           // add     x0,x0,x0
-      32h00000033,           // add     x0,x0,x0
-      32h00000033,           // add     x0,x0,x0
-      32h00000033,           // add     x0,x0,x0
-      32h00000033,           // add     x0,x0,x0
-      pad(0),
+$include('code.hex')
+      pad(0)
   };
 
   simple_dualport_bram uint32 rf0[32] = {0,1,1,0,100,0,1,pad(0)};
