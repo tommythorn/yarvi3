@@ -1,14 +1,13 @@
+SHELL=/bin/bash
 TARGET=verilator
-CODE=fib.hex
+CODE=loadstore.hex
 
 all: yarvi3
 
-code.hex: $(CODE)
-	cp $< $@
-
 .DEFAULT: $@.ice.lpp
-	make code.hex
-	silice-make.py -s $@.ice -b $(TARGET) -p basic -t shell -o /tmp/BUILD_$(subst :,_,$@)
+	$(MAKE) $(CODE)
+	-@cp $(CODE) code.hex
+	silice-make.py -s $@.ice -b $(TARGET) -p basic -t shell -o /tmp/BUILD_$(subst :,_,$@) |& tail -n +42
 
 %.o: %.S
 	riscv64-linux-gnu-gcc -fno-builtin -march=rv32i -mabi=ilp32 -Ofast -c $< -o $@
