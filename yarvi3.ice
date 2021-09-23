@@ -9,12 +9,13 @@
 
 // Coding style exception: these lines are a direct mapping on the
 // RISC-V specification and really are more readable as long lines.
-bitfield Rtype {uint7  funct7,                uint5 rs2, uint5 rs1,     uint3 funct3, uint5 rd,                  uint5 opcode, uint2 c}
-bitfield Itype {uint12 imm11_0,                          uint5 rs1,     uint3 funct3, uint5 rd,                  uint5 opcode, uint2 c}
-bitfield Stype {uint7  imm11_5,               uint5 rs2, uint5 rs1,     uint3 funct3, uint5 imm4_0,              uint5 opcode, uint2 c}
-bitfield Btype {uint1  imm12,  uint6 imm10_5, uint5 rs2, uint5 rs1,     uint3 funct3, uint4 imm4_1, uint1 imm11, uint5 opcode, uint2 c}
-bitfield Utype {uint20 imm31_12,                                                      uint5 rd,                  uint5 opcode, uint2 c}
-bitfield Jtype {uint1  imm20, uint10 imm10_1, uint1 imm11, uint8 imm19_12,            uint5 rd,                  uint5 opcode, uint2 c}
+// Shortened immXX to iXX, funct to fun
+bitfield Rtype {uint7  fun7,             uint5 rs2, uint5 rs1, uint3 fun3, uint5 rd,              uint5 opcode, uint2 c}
+bitfield Itype {uint12 i11_0,                       uint5 rs1, uint3 fun3, uint5 rd,              uint5 opcode, uint2 c}
+bitfield Stype {uint7  i11_5,            uint5 rs2, uint5 rs1, uint3 fun3, uint5 i4_0,            uint5 opcode, uint2 c}
+bitfield Btype {uint1  i12, uint6 i10_5, uint5 rs2, uint5 rs1, uint3 fun3, uint4 i4_1, uint1 i11, uint5 opcode, uint2 c}
+bitfield Utype {uint20 i31_12,                                             uint5 rd,              uint5 opcode, uint2 c}
+bitfield Jtype {uint1  i20, uint10 i10_1, uint1 i11, uint8 i19_12,         uint5 rd,              uint5 opcode, uint2 c}
 
 // a group for writeback
 group Wb { uint1 en = 0, uint4 rd = uninitialized, uint32 val = uninitialized }
@@ -83,18 +84,28 @@ $$end
 
     } -> {
       // Decode and register fetch
+      //  LOAD,   LOAD_FP,  CUSTOM0, MISC_MEM, OP_IMM, AUIPC, OP_IMM_32, EXT0,
+      //  STORE,  STORE_FP, CUSTOM1, AMO,      OP,     LUI,   OP_32,     EXT1,
+      //  MADD,   MSUB,     NMSUB,   NMADD,    OP_FP,  RES1,  CUSTOM2,   EXT2,
+      //  BRANCH, JALR,     RES0,    JAL,      SYSTEM, RES2,  CUSTOM3,   EXT3,
 
       valid         = valid & ~restart;
       insn          = code.rdata;
       rf0.addr0     = Rtype(insn).rs1;
       rf1.addr0     = Rtype(insn).rs2;
-      writes_reg    = Rtype(insn).opcode == /* OP */ 12 && Rtype(insn).rd != 0;
-      branch_target = pc + {{20{Btype(insn).imm12}},
-                                Btype(insn).imm11,
-                                Btype(insn).imm10_5,
-                                Btype(insn).imm4_1,
+      writes_reg    = Rtype(insn).rd != 0
+                   && (Rtype(insn).opcode == /* LOAD   */  0
+                    || Rtype(insn).opcode == /* OP_IMM */  4
+                    || Rtype(insn).opcode == /* OP     */ 12
+                    || Rtype(insn).opcode == /* JALR   */ 25
+                    || Rtype(insn).opcode == /* JAL    */ 27);
+
+      branch_target = pc + {{20{Btype(insn).i12}},
+                                Btype(insn).i11,
+                                Btype(insn).i10_5,
+                                Btype(insn).i4_1,
                                 1b0};
-      BLT = Rtype(insn).opcode == 24 && Btype(insn).funct3 == 4;
+      BLT = Rtype(insn).opcode == 24 && Btype(insn).fun3 == 4;
 
     } -> {
       // Execute stage
