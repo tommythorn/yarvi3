@@ -83,7 +83,7 @@ algorithm main(output uint8 leds)
 {
   // Memory
 //bram uint32 dcache[65536] = { 666, 777, 888, pad(999) }; // 256 KiB L1 = 64 Kb 32-bit words
-  bram uint32 dcache[65536] = uninitialized;
+  bram uint32 dcache[$DCACHE_WORDS$] = uninitialized;
   bram uint32 code[64] = {
 $include('code.hex')
       pad(0)

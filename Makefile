@@ -1,13 +1,17 @@
 SHELL=/bin/bash
 TARGET=verilator
 CODE=loadstore.hex
+BUILD=/tmp/BUILD_yarvi3
+DCACHE_WORDS=1024
+OPTS=-D DCACHE_WORDS=$(DCACHE_WORDS)
 
 all: yarvi3
 
-.DEFAULT: $@.ice.lpp
+yarvi3:
+	rm -rf $(BUILD)
 	$(MAKE) $(CODE)
 	-@cp $(CODE) code.hex
-	silice-make.py -s $@.ice -b $(TARGET) -p basic -t shell -o /tmp/BUILD_$(subst :,_,$@) |& tail -n +42
+	silice-make.py $(OPTS) -s $@.ice -b $(TARGET) -p basic -t shell -o $(BUILD)
 
 %.o: %.S
 	riscv64-linux-gnu-gcc -fno-builtin -march=rv32i -mabi=ilp32 -Ofast -c $< -o $@
