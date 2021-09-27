@@ -83,7 +83,11 @@ algorithm main(output uint8 leds)
 {
   // Memory
 //bram uint32 dcache[65536] = { 666, 777, 888, pad(999) }; // 256 KiB L1 = 64 Kb 32-bit words
-  bram uint32 dcache[$DCACHE_WORDS$] = uninitialized;
+// XXX strawman: 4 GiB PA = 32 bits => 18 tags for a 16 KiB way
+  bram uint18 dcache0_tag[$1 << (DCACHE_WAY_SZ_LOG2 - 6)$] = { pad(0) };
+  bram uint18 dcache1_tag[$1 << (DCACHE_WAY_SZ_LOG2 - 6)$] = { pad(0) };
+  bram uint32 dcache0[$1 << (DCACHE_WAY_SZ_LOG2 - 2)$] = uninitialized;
+  bram uint32 dcache1[$1 << (DCACHE_WAY_SZ_LOG2 - 2)$] = uninitialized;
   bram uint32 code[64] = {
 $include('code.hex')
       pad(0)
@@ -126,6 +130,8 @@ $include('code.hex')
   uint32 op2           = uninitialized;
   uint32 op2_imm       = uninitialized;
   uint32 alu_result    = uninitialized; // loops
+
+  uint32 dcache_rdata  = uninitialized; // loops
 
   // ... CM
   uint1  valid         = uninitialized;
@@ -207,15 +213,17 @@ $include('code.hex')
     } -> {
       // ** EXECUTE STAGE **
 
+      dcache_rdata = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18] ? dcache0.rdata : dcache1.rdata;
+
       switch (op1_src) {
-      case 0: {op1 = 1 ? dcache.rdata : writeback.val ;} // 0 to disable load->use bypass
+      case 0: {op1 = 1 ? dcache_rdata : writeback.val ;} // 0 to disable load->use bypass
       case 1: {op1 = alu_result   ;}
       case 2: {op1 = writeback.val;}
       case 3: {op1 = rf1.rdata0   ;}
       }
 
       switch (op2_src) {
-      case 0: {op2 = 1 ? dcache.rdata : writeback.val ;} // 0 to disable load->use bypass
+      case 0: {op2 = 1 ? dcache_rdata : writeback.val ;} // 0 to disable load->use bypass
       case 1: {op2 = alu_result   ;}
       case 2: {op2 = writeback.val;}
       case 3: {op2 = rf2.rdata0   ;}
@@ -225,9 +233,14 @@ $include('code.hex')
 
       alu_result    = op1 + op2_imm;
 
-      dcache.addr   = (1 ? (op1 + immediate) : rf1.rdata0) >> 2; // 0 to disable alu->load
-      dcache.wdata  = op2;
-      dcache.wenable= valid && opcode == $STORE$;
+      dcache0.addr     = (1 ? (op1 + immediate) : rf1.rdata0) >> 2; // 0 to disable alu->load
+      dcache1.addr     = (1 ? (op1 + immediate) : rf1.rdata0) >> 2; // 0 to disable alu->load
+      dcache0_tag.addr = (1 ? (op1 + immediate) : rf1.rdata0) >> 6; // 0 to disable alu->load
+      dcache1_tag.addr = (1 ? (op1 + immediate) : rf1.rdata0) >> 6; // 0 to disable alu->load
+      dcache0.wdata    = op2;
+      dcache1.wdata    = op2;
+      dcache0.wenable  = valid && opcode == $STORE$;
+      dcache1.wenable  = valid && opcode == $STORE$;
 
     } -> {
       // ** COMMIT **
@@ -235,7 +248,7 @@ $include('code.hex')
       valid         = restarting | !flushing;
 
       writeback.rd  = Rtype(insn).rd;
-      writeback.val = is_load ? dcache.rdata : alu_result;
+      writeback.val = is_load ? dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18] ? dcache0.rdata : dcache0.rdata : alu_result;
       writeback.en  = valid && writes_reg;
 
       if (valid && writeback.en) {
