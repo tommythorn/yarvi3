@@ -2,7 +2,7 @@ SHELL=/bin/bash
 TARGET=verilator
 CODE=loadstore.hex
 BUILD=/tmp/BUILD_yarvi3
-DCACHE_WAY_SZ_LOG2=10
+DCACHE_WAY_SZ_LOG2=12 # 2^12 words = 2^14 bytes = 16 KiB => 32 KiB D$
 OPTS=-D DCACHE_WAY_SZ_LOG2=$(DCACHE_WAY_SZ_LOG2)
 
 all: yarvi3

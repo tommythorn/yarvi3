@@ -132,6 +132,14 @@ $include('code.hex')
   uint32 alu_result    = uninitialized; // loops
 
   uint32 dcache_rdata  = uninitialized; // loops
+  uint1  tag0_match    = uninitialized;
+  uint1  tag1_match    = uninitialized;
+  uint1  cache_miss    = uninitialized;
+
+  uint32 pending_store_addr = uninitialized;
+  uint32 pending_store_data = uninitialized;
+  uint1  pending_store_wen0 = 0;
+  uint1  pending_store_wen1 = 0;
 
   // ... CM
   uint1  valid         = uninitialized;
@@ -147,6 +155,8 @@ $include('code.hex')
     rf1.wenable1 = writeback.en;     rf2.wenable1 = writeback.en;
     rf1.addr1    = writeback.rd;     rf2.addr1    = writeback.rd;
     rf1.wdata1   = writeback_val;    rf2.wdata1   = writeback.val;
+    dcache_rdata = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18]
+                 ? dcache0.rdata : dcache1.rdata;
   }
 
   while (1) {
@@ -212,18 +222,15 @@ $include('code.hex')
 
     } -> {
       // ** EXECUTE STAGE **
-
-      dcache_rdata = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18] ? dcache0.rdata : dcache1.rdata;
-
       switch (op1_src) {
-      case 0: {op1 = 1 ? dcache_rdata : writeback.val ;} // 0 to disable load->use bypass
+      case 0: {op1 = dcache_rdata ;}
       case 1: {op1 = alu_result   ;}
       case 2: {op1 = writeback.val;}
       case 3: {op1 = rf1.rdata0   ;}
       }
 
       switch (op2_src) {
-      case 0: {op2 = 1 ? dcache_rdata : writeback.val ;} // 0 to disable load->use bypass
+      case 0: {op2 = dcache_rdata ;}
       case 1: {op2 = alu_result   ;}
       case 2: {op2 = writeback.val;}
       case 3: {op2 = rf2.rdata0   ;}
@@ -233,30 +240,68 @@ $include('code.hex')
 
       alu_result    = op1 + op2_imm;
 
-      dcache0.addr     = (1 ? (op1 + immediate) : rf1.rdata0) >> 2; // 0 to disable alu->load
-      dcache1.addr     = (1 ? (op1 + immediate) : rf1.rdata0) >> 2; // 0 to disable alu->load
-      dcache0_tag.addr = (1 ? (op1 + immediate) : rf1.rdata0) >> 6; // 0 to disable alu->load
-      dcache1_tag.addr = (1 ? (op1 + immediate) : rf1.rdata0) >> 6; // 0 to disable alu->load
-      dcache0.wdata    = op2;
-      dcache1.wdata    = op2;
-      dcache0.wenable  = valid && opcode == $STORE$;
-      dcache1.wenable  = valid && opcode == $STORE$;
+      dcache0_tag.addr = (op1 + immediate) >> 6;
+      dcache1_tag.addr = (op1 + immediate) >> 6;
+
+      dcache0.addr     = opcode == $LOAD$
+                       ? (op1 + immediate) >> 2 : pending_store_addr;
+      dcache1.addr     = opcode == $LOAD$
+                       ? (op1 + immediate) >> 2 : pending_store_addr;
+      dcache0.wdata    = pending_store_data;
+      dcache1.wdata    = pending_store_data;
+      dcache0.wenable  = pending_store_wen0 && opcode != $LOAD$;
+      dcache1.wenable  = pending_store_wen1 && opcode != $LOAD$;
 
     } -> {
       // ** COMMIT **
 
-      valid         = restarting | !flushing;
+      tag0_match    = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
+      tag1_match    = dcache1_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
+      cache_miss    = !tag0_match & !tag1_match
+                    & (opcode == $LOAD$ || opcode == $STORE$);
+
+      if (cache_miss) {
+         $display("%h miss", alu_result);
+      }
+
+      valid         = (restarting | !flushing) & !cache_miss;
+
+      if (valid && opcode == $LOAD$ &&
+          (pending_store_wen0 || pending_store_wen1) &&
+                    pending_store_addr == dcache0.addr) {
+          $display("load-hit-store, restart %h", pc);
+          valid         = 0;
+          restart       = 1;
+          restart_pc    = pc;
+          flushing      = 1;
+      } else {
+          restart       = valid && BLT && op1 < op2;
+          restart_pc    = branch_target;
+      }
+
+      if (valid && opcode == $STORE$) {
+            pending_store_data = op2;
+            pending_store_addr = (op1 + immediate) >> 2;
+            pending_store_wen0 =
+                dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
+            pending_store_wen1 =
+                dcache1_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
+      } else {
+            if (pending_store_wen0) {
+                pending_store_wen0 = 0;
+            }
+            if (pending_store_wen1) {
+                pending_store_wen1 = 0;
+            }
+      }
 
       writeback.rd  = Rtype(insn).rd;
-      writeback.val = is_load ? dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18] ? dcache0.rdata : dcache0.rdata : alu_result;
+      writeback.val = is_load ? dcache_rdata : alu_result;
       writeback.en  = valid && writes_reg;
 
       if (valid && writeback.en) {
           leds = writeback_val;
       }
-
-      restart       = valid && BLT && op1 < op2;
-      restart_pc    = branch_target;
 
       illegal       = valid && insn[0,2] != 3;
 
@@ -266,6 +311,12 @@ $include('code.hex')
 
 $$if SIMULATION then
       if (valid) {
+        if (pending_store_wen0 | pending_store_wen1) {
+                $display("pending store of %h to %h way%d",
+                         pending_store_data,
+                         pending_store_addr,
+                         pending_store_wen1);
+        }
         switch (opcode) {
         case $LOAD$: {
           if (immediate == 0) {
