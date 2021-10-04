@@ -41,7 +41,7 @@ bitfield Utype {uint20 i31_12,                                             uint5
 bitfield Jtype {uint1  i20, uint10 i10_1, uint1 i11, uint8 i19_12,         uint5 rd,              uint5 opcode, uint2 c}
 
 // a group for writeback
-group Wb { uint1 en = 0, uint4 rd = uninitialized, uint32 val = uninitialized }
+group Wb { uint1 en = 0, uint6 rd = uninitialized, uint32 val = uninitialized }
 
 // RISC-V Opcodes
 $$LOAD          = 0;
@@ -94,8 +94,8 @@ $include('code.hex')
   };
 
   // Architectural state
-  simple_dualport_bram uint32 rf1[32] = {0,1,1,0,100,0,1,pad(0)};
-  simple_dualport_bram uint32 rf2[32] = {0,1,1,0,100,0,1,pad(0)};
+  simple_dualport_bram uint32 prf1[64] = {pad(0)};
+  simple_dualport_bram uint32 prf2[64] = {pad(0)};
 
   uint32 cycle         = -1;    // track cycles (≡ CSR mcycle)
   uint32 seqno         = -1;    // track instructions (~ CSR minstret)
@@ -125,6 +125,20 @@ $include('code.hex')
   uint2  op1_src       = uninitialized;
   uint2  op2_src       = uninitialized;
 
+  // .. RE
+  uint6 rmap[32]       = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
+  uint5 rfreelist_w    = 32;
+  uint5 rfreelist_r    = 0;
+
+  uint6 map[32]        = uninitialized;
+  uint6 freelist[32]   = {32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63};
+  uint5 freelist_r     = uninitialized;
+  uint5 freelist_r_real= uninitialized;
+  uint6 pr1            = uninitialized;
+  uint6 pr2            = uninitialized;
+  uint6 prd            = uninitialized;
+  uint6 prd_old        = uninitialized;
+
   // .. EX
   uint32 op1           = uninitialized;
   uint32 op2           = uninitialized;
@@ -152,11 +166,11 @@ $include('code.hex')
   // the fact that RF is two idential blockrams.
   Wb     writeback;
   always_after {
-    rf1.wenable1 = writeback.en;     rf2.wenable1 = writeback.en;
-    rf1.addr1    = writeback.rd;     rf2.addr1    = writeback.rd;
-    rf1.wdata1   = writeback_val;    rf2.wdata1   = writeback.val;
-    dcache_rdata = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18]
-                 ? dcache0.rdata : dcache1.rdata;
+    prf1.wenable1 = writeback.en;     prf2.wenable1 = writeback.en;
+    prf1.addr1    = writeback.rd;     prf2.addr1    = writeback.rd;
+    prf1.wdata1   = writeback_val;    prf2.wdata1   = writeback.val;
+    dcache_rdata  = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18]
+                  ? dcache0.rdata : dcache1.rdata;
   }
 
   while (1) {
@@ -175,8 +189,6 @@ $include('code.hex')
 
       insn          = code.rdata;
       opcode        = Rtype(insn).c == 3 ? Rtype(insn).opcode : 5d$RES2$;
-      rf1.addr0     = Rtype(insn).rs1;
-      rf2.addr0     = Rtype(insn).rs2;
       writes_reg    = Rtype(insn).rd != 0
                    && (opcode == $LOAD$
                     || opcode == $OP_IMM$
@@ -221,24 +233,53 @@ $include('code.hex')
       BLT           = opcode == $BRANCH$ && Btype(insn).fun3 == 4;
 
     } -> {
+      // ** RENAMING **
+
+      /* XXX A slight Silice wart; it can't grok the same variable
+       * updated multiple times in multiple places so we SSA convert
+       * it and introduce freelist_r_real */
+      // XXX ugly, find a better way
+      freelist_r_real = restarting ? rfreelist_r : freelist_r;
+      if (restarting) {
+      // XXX This is a likely critical-path: we effectively do
+      //   prX = restarting ? rmap[...rsX] : map[...rsX];
+      // it _could_ help making that explicit.
+$$for i=1,31 do
+         map[$i$] = rmap[$i$];
+$$end
+      }
+
+      pr1                 = map[Rtype(insn).rs1];
+      pr2                 = map[Rtype(insn).rs2];
+      prd_old             = map[Rtype(insn).rd];
+      prd                 = freelist[freelist_r_real];
+      map[Rtype(insn).rd] = prd;
+
+      prf1.addr0          = pr1;
+      prf2.addr0          = pr2;
+      freelist_r          = freelist_r_real + writes_reg;
+
+    } -> {
       // ** EXECUTE STAGE **
       switch (op1_src) {
       case 0: {op1 = dcache_rdata ;}
       case 1: {op1 = alu_result   ;}
       case 2: {op1 = writeback.val;}
-      case 3: {op1 = rf1.rdata0   ;}
+      case 3: {op1 = prf1.rdata0  ;}
       }
 
       switch (op2_src) {
       case 0: {op2 = dcache_rdata ;}
       case 1: {op2 = alu_result   ;}
       case 2: {op2 = writeback.val;}
-      case 3: {op2 = rf2.rdata0   ;}
+      case 3: {op2 = prf2.rdata0  ;}
       }
 
-      op2_imm       = op2_is_imm ? immediate : op2;
+      // XXX This doesn't seem to make sense.  Why not fold this into
+      // the bypass? (We'll need two as we need both op2 and op2_imm)
+      op2_imm          = op2_is_imm ? immediate : op2;
 
-      alu_result    = op1 + op2_imm;
+      alu_result       = op1 + op2_imm;
 
       dcache0_tag.addr = (op1 + immediate) >> 6;
       dcache1_tag.addr = (op1 + immediate) >> 6;
@@ -255,124 +296,128 @@ $include('code.hex')
     } -> {
       // ** COMMIT **
 
-      tag0_match    = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
-      tag1_match    = dcache1_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
-      cache_miss    = !tag0_match & !tag1_match
-                    & (opcode == $LOAD$ || opcode == $STORE$);
+      tag0_match       = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
+      tag1_match       = dcache1_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
+      cache_miss       = !tag0_match & !tag1_match
+                       & (opcode == $LOAD$ || opcode == $STORE$);
 
       if (cache_miss) {
-         $display("%h miss", alu_result);
+        $display("%h miss", alu_result);
       }
 
-      valid         = (restarting | !flushing) & !cache_miss;
+      valid            = (restarting | !flushing) & !cache_miss;
 
       if (valid && opcode == $LOAD$ &&
           (pending_store_wen0 || pending_store_wen1) &&
-                    pending_store_addr == dcache0.addr) {
-          $display("load-hit-store, restart %h", pc);
-          valid         = 0;
-          restart       = 1;
-          restart_pc    = pc;
-          flushing      = 1;
+          pending_store_addr == dcache0.addr) {
+        $display("load-hit-store, restart %h", pc);
+        valid        = 0;
+        restart      = 1;
+        restart_pc   = pc;
+        flushing     = 1;
       } else {
-          restart       = valid && BLT && op1 < op2;
-          restart_pc    = branch_target;
+        restart      = valid && BLT && op1 < op2;
+        restart_pc   = branch_target;
       }
 
       if (valid && opcode == $STORE$) {
-            pending_store_data = op2;
-            pending_store_addr = (op1 + immediate) >> 2;
-            pending_store_wen0 =
-                dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
-            pending_store_wen1 =
-                dcache1_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
+        pending_store_data = op2;
+        pending_store_addr = (op1 + immediate) >> 2;
+        pending_store_wen0 = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
+        pending_store_wen1 = dcache1_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
       } else {
-            if (pending_store_wen0) {
-                pending_store_wen0 = 0;
-            }
-            if (pending_store_wen1) {
-                pending_store_wen1 = 0;
-            }
+        pending_store_wen0 = 0;
+        pending_store_wen1 = 0;
       }
 
-      writeback.rd  = Rtype(insn).rd;
+      writeback.rd  = prd;
       writeback.val = is_load ? dcache_rdata : alu_result;
       writeback.en  = valid && writes_reg;
 
-      if (valid && writeback.en) {
-          leds = writeback_val;
+      if (writeback.en) {
+        leds                  = writeback_val;
+
+        rmap[Rtype(insn).rd]  = prd;
+        freelist[rfreelist_w] = prd_old;
+        rfreelist_w           = rfreelist_w + 1;
+        rfreelist_r           = freelist_r;
       }
 
-      illegal       = valid && insn[0,2] != 3;
+      illegal       = valid && insn[0,2] != 3; // XXX we already remapped that
 
       if (valid) {
-          flushing = restart;
+        flushing = restart;
       }
 
 $$if SIMULATION then
       if (valid) {
         if (pending_store_wen0 | pending_store_wen1) {
-                $display("pending store of %h to %h way%d",
-                         pending_store_data,
-                         pending_store_addr,
-                         pending_store_wen1);
+          $display("pending store of %h to %h way%d", pending_store_data,
+                   pending_store_addr, pending_store_wen1);
         }
+
+        // Disassemble
         switch (opcode) {
-        case $LOAD$: {
-          if (immediate == 0) {
-             $display("%5d WB %h:%h x%1d = *(u32 *)x%1d  \t// %1d", cycle, pc, insn,
-                      Rtype(insn).rd, Rtype(insn).rs1, writeback.val);
-          } else {
-             $display("%5d WB %h:%h x%1d = *(u32 *)(x%1d + %1d)  \t// %1d", cycle, pc, insn,
-                      Rtype(insn).rd, Rtype(insn).rs1, immediate, writeback.val);
-          }}
-        case $STORE$: {
-          if (immediate == 0) {
-             $display("%5d WB %h:%h *(u32 *)x%1d = x%1d", cycle, pc, insn,
-                      Rtype(insn).rs1, Rtype(insn).rs2);
-          } else {
-             $display("%5d WB %h:%h *(u32 *)(x%1d + %1d) = x%1d", cycle, pc, insn,
-                      Rtype(insn).rs1, immediate, Rtype(insn).rs2);
-          }}
-        case $OP$: {
-          $display("%5d WB %h:%h x%1d = x%1d + x%1d   \t// %1d", cycle, pc, insn,
-                   Rtype(insn).rd, Rtype(insn).rs1, Rtype(insn).rs2, writeback.val);
-          }
-        case $OP_IMM$: {
-          if (Rtype(insn).rs1 == 0 && Rtype(insn).rd == 0 && immediate == 0) {
-            $display("%5d WB %h:%h", cycle, pc, insn);
-          } else {
-            if (Rtype(insn).rs1 == 0) {
-              $display("%5d WB %h:%h x%1d = %1d", cycle, pc, insn,
-                       Rtype(insn).rd, immediate);
+          case $LOAD$: {
+            if (immediate == 0) {
+               $display("%5d WB %h:%h x%1dp%1d = *(u32 *)x%1dp%1d  \t// %1d", cycle, pc, insn,
+                        Rtype(insn).rd, prd, Rtype(insn).rs1, pr1, writeback.val);
             } else {
-              if (immediate == 0) {
-                 $display("%5d WB %h:%h x%1d = x%1d   \t\t// %1d", cycle, pc, insn,
-                          Rtype(insn).rd, Rtype(insn).rs1, writeback.val);
+               $display("%5d WB %h:%h x%1dp%1d = *(u32 *)(x%1dp%1d + %1d)  \t// %1d", cycle, pc, insn,
+                        Rtype(insn).rd, prd, Rtype(insn).rs1, pr1, immediate, writeback.val);
+            }
+          }
+          case $STORE$: {
+            if (immediate == 0) {
+               $display("%5d WB %h:%h *(u32 *)x%1dp%1d = x%1dp%1d", cycle, pc, insn,
+                        Rtype(insn).rs1, pr1, Rtype(insn).rs2, pr2);
+            } else {
+               $display("%5d WB %h:%h *(u32 *)(x%1dp%1d + %1d) = x%1dp%1d", cycle, pc, insn,
+                        Rtype(insn).rs1, pr1, immediate, Rtype(insn).rs2, pr2);
+            }
+          }
+          case $OP$: {
+            $display("%5d WB %h:%h x%1dp%1d = x%1dp%1d + x%1dp%1d   \t// %1d", cycle, pc, insn,
+                     Rtype(insn).rd, prd, Rtype(insn).rs1, pr1, Rtype(insn).rs2, pr2, writeback.val);
+          }
+          case $OP_IMM$: {
+            if (Rtype(insn).rs1 == 0 && Rtype(insn).rd == 0 && immediate == 0) {
+              $display("%5d WB %h:%h", cycle, pc, insn);
+            } else {
+              if (Rtype(insn).rs1 == 0) {
+                $display("%5d WB %h:%h x%1dp%1d = %1d", cycle, pc, insn,
+                         Rtype(insn).rd, prd, immediate);
               } else {
-                 $display("%5d WB %h:%h x%1d = x%1d + %1d   \t// %1d", cycle, pc, insn,
-                          Rtype(insn).rd, Rtype(insn).rs1, immediate, writeback.val);
+                if (immediate == 0) {
+                   $display("%5d WB %h:%h x%1dp%1d = x%1dp%1d   \t\t// %1d", cycle, pc, insn,
+                            Rtype(insn).rd, prd, Rtype(insn).rs1, pr1, writeback.val);
+                } else {
+                   $display("%5d WB %h:%h x%1dp%1d = x%1dp%1d + %1d   \t// %1d", cycle, pc, insn,
+                            Rtype(insn).rd, prd, Rtype(insn).rs1, pr1, immediate, writeback.val);
+                }
               }
             }
           }
-        }
-        case $BRANCH$: {
-          $display("%5d WB %h:%h if x%1d < x%1d: pc = %h", cycle, pc, insn,
-                   Rtype(insn).rs1, Rtype(insn).rs2, branch_target);
-        }
-
-        default: {
-          if (writeback.en) {
-            $display("%5d WB %h:%h %1d,%1d   %d -> r%1d", cycle,
-                      pc, insn, op2, op1, writeback.val, writeback.rd);
-          } else {
-            $display("%5d WB %h:%h %1d,%1d", cycle, pc, insn, op2, op1);
+          case $BRANCH$: {
+            $display("%5d WB %h:%h if x%1dp%1d < x%1dp%1d: pc = %h", cycle, pc, insn,
+                     Rtype(insn).rs1, pr1, Rtype(insn).rs2, pr2, branch_target);
           }
-        }}
+
+          default: {
+            if (writeback.en) {
+              $display("%5d WB %h:%h %1d,%1d   %d -> r%1d", cycle,
+                        pc, insn, op2, op1, writeback.val, writeback.rd);
+            } else {
+              $display("%5d WB %h:%h %1d,%1d", cycle, pc, insn, op2, op1);
+            }
+          }
+        }
       }
 $$end
     }
 
-    if (illegal) { break; }
+    if (illegal) {
+      break;
+    }
   }
 }
