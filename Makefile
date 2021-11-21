@@ -5,3 +5,6 @@ all: yarvi3
 
 clean:
 	rm -rf /tmp/BUILD_*
+
+hardware:
+	$(MAKE) TARGET=ulx3s
