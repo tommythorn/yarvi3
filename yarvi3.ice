@@ -1,4 +1,9 @@
 /*
+
+20231119 Note, this is very much a work-in-progress proof-of-concept
+that stalled largely due tools breaking.  It runs small tests, but
+isn't a useful implementation.
+
 20210922 Complex pipelines aren't helped by Silice.
 
 We need to leverage the Pipeline Control Invariant: For all stages

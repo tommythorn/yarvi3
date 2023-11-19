@@ -1,4 +1,4 @@
-# The 3rd gen YARVI
+# Design study for the 3rd generation YARVI
 
 [YARVI (Yet Another RISC-V Implementation, naming is
 hard)](https://github.com/tommythorn/yarvi) was the first non-Berkeley
@@ -15,14 +15,7 @@ getting a trivial pipeline going.
 Due to a bug in Silice I couldn't annotate the pipeline stages, but
 it's the classic Fetch, Decode/Reg Fetch, Execute, Writeback.
 
-Only two RISC instructions are implemented, ADD and BLT.  The encoding
-is chosen such that we can trivially write instructions direct in
-hexidecimal.  Instructions are 32-bit.  Given an instruction `insn`,
-`insn[31:16]` is the absolute branch target, `insn[15:12]` is the
-opcode (4hA for ADD and 4hB for BLT), `insn[11:8]` is the destination
-register (rd), `insn[7:4]` is registers rs, and `insn[3:0]` is rt.
-(I'm actually fond of Silice's notation would write, say rd, as
-`insn[8,4]` but I think it would have been clearer as `insn[8 :+ 4]`).
+Just a few RISC-V instructions are implemented, ADD, BLT, LW, and SW.
 
 ## Pipeline restarting/flushing
 
@@ -62,3 +55,11 @@ Verilog implementation.  Notably,
 
 Together this also means that inserting a stage in the middle requires
 no changes to the other stages.
+
+(20231119 addition below)
+
+It doesn't change the need to reasons able multiple concurrent stages
+though; register bypass is still a completely manual and error prone
+process as is the critical handling of pipeline controls (hazards,
+restarts, flushing, stalling). Handling this correctly is interesting
+enough, but doing this while doing it _efficiently_ is hard.
