@@ -266,7 +266,7 @@ $include('code.hex')
                     & (opcode == $LOAD$ || opcode == $STORE$);
 
       if (cache_miss) {
-         $display("%h miss", alu_result);
+         __display("%h miss", alu_result);
       }
 
       valid         = (restarting | !flushing) & !cache_miss;
@@ -274,7 +274,7 @@ $include('code.hex')
       if (valid && opcode == $LOAD$ &&
           (pending_store_wen0 || pending_store_wen1) &&
                     pending_store_addr == dcache0.addr) {
-          $display("load-hit-store, restart %h", pc);
+          __display("load-hit-store, restart %h", pc);
           valid         = 0;
           restart       = 1;
           restart_pc    = pc;
@@ -317,7 +317,7 @@ $include('code.hex')
 $$if SIMULATION then
       if (valid) {
         if (pending_store_wen0 | pending_store_wen1) {
-                $display("pending store of %h to %h way%d",
+                __display("pending store of %h to %h way%d",
                          pending_store_data,
                          pending_store_addr,
                          pending_store_wen1);
@@ -325,53 +325,53 @@ $$if SIMULATION then
         switch (opcode) {
         case $LOAD$: {
           if (immediate == 0) {
-             $display("%5d WB %h:%h x%1d = *(u32 *)x%1d  \t// %1d", cycle, pc, insn,
+             __display("%5d WB %h:%h x%1d = *(u32 *)x%1d  \t// %1d", cycle, pc, insn,
                       Rtype(insn).rd, Rtype(insn).rs1, writeback.val);
           } else {
-             $display("%5d WB %h:%h x%1d = *(u32 *)(x%1d + %1d)  \t// %1d", cycle, pc, insn,
+             __display("%5d WB %h:%h x%1d = *(u32 *)(x%1d + %1d)  \t// %1d", cycle, pc, insn,
                       Rtype(insn).rd, Rtype(insn).rs1, immediate, writeback.val);
           }}
         case $STORE$: {
           if (immediate == 0) {
-             $display("%5d WB %h:%h *(u32 *)x%1d = x%1d", cycle, pc, insn,
+             __display("%5d WB %h:%h *(u32 *)x%1d = x%1d", cycle, pc, insn,
                       Rtype(insn).rs1, Rtype(insn).rs2);
           } else {
-             $display("%5d WB %h:%h *(u32 *)(x%1d + %1d) = x%1d", cycle, pc, insn,
+             __display("%5d WB %h:%h *(u32 *)(x%1d + %1d) = x%1d", cycle, pc, insn,
                       Rtype(insn).rs1, immediate, Rtype(insn).rs2);
           }}
         case $OP$: {
-          $display("%5d WB %h:%h x%1d = x%1d + x%1d   \t// %1d", cycle, pc, insn,
+          __display("%5d WB %h:%h x%1d = x%1d + x%1d   \t// %1d", cycle, pc, insn,
                    Rtype(insn).rd, Rtype(insn).rs1, Rtype(insn).rs2, writeback.val);
           }
         case $OP_IMM$: {
           if (Rtype(insn).rs1 == 0 && Rtype(insn).rd == 0 && immediate == 0) {
-            $display("%5d WB %h:%h", cycle, pc, insn);
+            __display("%5d WB %h:%h", cycle, pc, insn);
           } else {
             if (Rtype(insn).rs1 == 0) {
-              $display("%5d WB %h:%h x%1d = %1d", cycle, pc, insn,
+              __display("%5d WB %h:%h x%1d = %1d", cycle, pc, insn,
                        Rtype(insn).rd, immediate);
             } else {
               if (immediate == 0) {
-                 $display("%5d WB %h:%h x%1d = x%1d   \t\t// %1d", cycle, pc, insn,
+                 __display("%5d WB %h:%h x%1d = x%1d   \t\t// %1d", cycle, pc, insn,
                           Rtype(insn).rd, Rtype(insn).rs1, writeback.val);
               } else {
-                 $display("%5d WB %h:%h x%1d = x%1d + %1d   \t// %1d", cycle, pc, insn,
+                 __display("%5d WB %h:%h x%1d = x%1d + %1d   \t// %1d", cycle, pc, insn,
                           Rtype(insn).rd, Rtype(insn).rs1, immediate, writeback.val);
               }
             }
           }
         }
         case $BRANCH$: {
-          $display("%5d WB %h:%h if x%1d < x%1d: pc = %h", cycle, pc, insn,
+          __display("%5d WB %h:%h if x%1d < x%1d: pc = %h", cycle, pc, insn,
                    Rtype(insn).rs1, Rtype(insn).rs2, branch_target);
         }
 
         default: {
           if (writeback.en) {
-            $display("%5d WB %h:%h %1d,%1d   %d -> r%1d", cycle,
+            __display("%5d WB %h:%h %1d,%1d   %d -> r%1d", cycle,
                       pc, insn, op2, op1, writeback.val, writeback.rd);
           } else {
-            $display("%5d WB %h:%h %1d,%1d", cycle, pc, insn, op2, op1);
+            __display("%5d WB %h:%h %1d,%1d", cycle, pc, insn, op2, op1);
           }
         }}
       }
