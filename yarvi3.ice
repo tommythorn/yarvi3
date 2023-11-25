@@ -84,7 +84,7 @@ $$RES2          = 29;
 
 
 
-algorithm main(output uint8 leds)
+unit main(output uint8 leds)
 {
   // Memory
 //bram uint32 dcache[65536] = { 666, 777, 888, pad(999) }; // 256 KiB L1 = 64 Kb 32-bit words
@@ -156,15 +156,7 @@ $include('code.hex')
   // Using Wb and an always_after block allows us to abstract away
   // the fact that RF is two idential blockrams.
   Wb     writeback;
-  always_after {
-    rf1.wenable1 = writeback.en;     rf2.wenable1 = writeback.en;
-    rf1.addr1    = writeback.rd;     rf2.addr1    = writeback.rd;
-    rf1.wdata1   = writeback_val;    rf2.wdata1   = writeback.val;
-    dcache_rdata = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18]
-                 ? dcache0.rdata : dcache1.rdata;
-  }
-
-  while (1) {
+  always {
     {
       // ** FETCH STAGE **
 
@@ -175,7 +167,8 @@ $include('code.hex')
       code.addr     = pc[2,30];
       restarting    = restart;
 
-    } -> {
+    ->
+
       // ** DECODE AND REGISTER FETCH **
 
       insn          = code.rdata;
@@ -225,7 +218,8 @@ $include('code.hex')
 
       BLT           = opcode == $BRANCH$ && Btype(insn).fun3 == 4;
 
-    } -> {
+    ->
+
       // ** EXECUTE STAGE **
       switch (op1_src) {
       case 0: {op1 = dcache_rdata ;}
@@ -257,7 +251,8 @@ $include('code.hex')
       dcache0.wenable  = pending_store_wen0 && opcode != $LOAD$;
       dcache1.wenable  = pending_store_wen1 && opcode != $LOAD$;
 
-    } -> {
+    ->
+
       // ** COMMIT **
 
       tag0_match    = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18];
@@ -378,6 +373,12 @@ $$if SIMULATION then
 $$end
     }
 
-    if (illegal) { break; }
+    if (illegal) { __finish();  /* simulation only */ }
+
+    rf1.wenable1 = writeback.en;     rf2.wenable1 = writeback.en;
+    rf1.addr1    = writeback.rd;     rf2.addr1    = writeback.rd;
+    rf1.wdata1   = writeback_val;    rf2.wdata1   = writeback.val;
+    dcache_rdata = dcache0_tag.rdata == alu_result[$DCACHE_WAY_SZ_LOG2$, 18]
+                 ? dcache0.rdata : dcache1.rdata;
   }
 }
